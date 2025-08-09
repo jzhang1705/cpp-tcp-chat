@@ -18,6 +18,7 @@
   },
   "homepage": "https://github.com/jzhang1705/cpp-tcp-chat#readme",
   "dependencies": {
+    "node-fetch": "^3.3.2",
     "ws": "^8.18.3"
   }
 }

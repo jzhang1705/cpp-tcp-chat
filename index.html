@@ -6,17 +6,38 @@
 <style>
   body { font-family: Arial, sans-serif; max-width: 600px; margin: auto; }
   #messages { border: 1px solid #ccc; height: 300px; overflow-y: scroll; padding: 10px; }
-  #input { width: 100%; box-sizing: border-box; }
+  #row { display:flex; gap:8px; margin-top:10px; }
+  #input { flex:1; box-sizing: border-box; padding:8px; }
+  select, button { padding:8px; }
 </style>
 </head>
 <body>
   <h2>WebSocket Chat</h2>
+
+  <label>
+    View language:
+    <select id="lang">
+      <option value="en" selected>English</option>
+      <option value="zh">Chinese (Simplified)</option>
+      <option value="es">Spanish</option>
+      <option value="fr">French</option>
+      <!-- add more as needed -->
+    </select>
+  </label>
+
   <div id="messages"></div>
-  <input id="input" placeholder="Type message here..." autocomplete="off" />
+
+  <div id="row">
+    <input id="input" placeholder="Type message here..." autocomplete="off" />
+    <button id="send">Send</button>
+  </div>
+
   <script>
     let ws;
     const messagesDiv = document.getElementById('messages');
     const input = document.getElementById('input');
+    const sendBtn = document.getElementById('send');
+    const langSel = document.getElementById('lang');
 
     function appendMessage(msg) {
       const p = document.createElement('p');
@@ -29,32 +50,35 @@
       ws = new WebSocket('ws://localhost:5555');
 
       ws.onopen = () => {
-        let name = prompt('Enter your name:');
-        ws.send(name);
+        const name = prompt('Enter your name:') || 'Anonymous';
+        ws.send(name); // FIRST message stays plain text (server expects this)
+
+        // Now tell server our preferred language
+        ws.send(JSON.stringify({ type: 'setLang', lang: langSel.value }));
       };
 
-      ws.onmessage = (event) => {
-        appendMessage(event.data);
-      };
-
-      ws.onclose = () => {
-        appendMessage('Disconnected from server.');
-      };
+      ws.onmessage = (event) => appendMessage(event.data);
+      ws.onclose = () => appendMessage('Disconnected from server.');
     }
 
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        const msg = input.value.trim();
-        if (msg) {
-          if (msg === '/quit') {
-            ws.close();
-          } else {
-            ws.send(msg);
-          }
-          input.value = '';
-        }
+    // Change language mid-session
+    langSel.addEventListener('change', () => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'setLang', lang: langSel.value }));
       }
     });
+
+    function sendCurrent() {
+      const msg = input.value.trim();
+      if (!msg || !ws || ws.readyState !== WebSocket.OPEN) return;
+      if (msg === '/quit') { ws.close(); return; }
+      // Send chat as JSON so the server can translate/broadcast per user
+      ws.send(JSON.stringify({ type: 'chat', text: msg }));
+      input.value = '';
+    }
+
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendCurrent(); });
+    sendBtn.addEventListener('click', sendCurrent);
 
     connect();
   </script>
