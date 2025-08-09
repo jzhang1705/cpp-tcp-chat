@@ -6,8 +6,11 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 
+constexpr int PORT = 5555;
+constexpr int BUFFER_SIZE = 1024;
+
 void receive_loop(int socket_fd) {
-    char buffer[1024];
+    char buffer[BUFFER_SIZE];
     while (true) {
         ssize_t bytes = recv(socket_fd, buffer, sizeof(buffer) - 1, 0);
         if (bytes <= 0) {
@@ -20,7 +23,6 @@ void receive_loop(int socket_fd) {
 }
 
 int main() {
-    // Prompt for name before connecting
     std::cout << "Please enter a name: ";
     std::string client_name;
     std::getline(std::cin, client_name);
@@ -33,7 +35,8 @@ int main() {
 
     sockaddr_in server_addr{};
     server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(5555);
+    server_addr.sin_port = htons(PORT);
+
     if (inet_pton(AF_INET, "127.0.0.1", &server_addr.sin_addr) <= 0) {
         perror("inet_pton");
         close(sock_fd);
@@ -46,25 +49,26 @@ int main() {
         return 1;
     }
 
-    std::cout << "Connected to server. Type /quit to exit.\n";
-
-    // Send client name to server
-    if (send(sock_fd, client_name.c_str(), client_name.size(), 0) < 0) {
+    // Send the client name right after connecting
+    if (send(sock_fd, client_name.c_str(), client_name.size(), 0) == -1) {
         perror("send");
         close(sock_fd);
         return 1;
     }
 
-    // Start receiving messages in background thread
+    std::cout << "Connected to server. Type /quit to exit.\n";
+
     std::thread(receive_loop, sock_fd).detach();
 
     std::string msg;
     while (true) {
         std::cout << "> ";
-        if (!std::getline(std::cin, msg)) break; // Handle EOF
-        if (msg == "/quit") break;
+        if (!std::getline(std::cin, msg))
+            break; // EOF or error
+        if (msg == "/quit")
+            break;
 
-        if (send(sock_fd, msg.c_str(), msg.size(), 0) < 0) {
+        if (send(sock_fd, msg.c_str(), msg.size(), 0) == -1) {
             perror("send");
             break;
         }
