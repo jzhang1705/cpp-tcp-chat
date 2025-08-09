@@ -1,0 +1,140 @@
+Your code will mostly work as a basic multi-client chat server, but there are a few issues and potential pitfalls you should fix before running it.
+
+---
+
+### 1. **Locking problem when calling `get_client_name`**
+
+Right now you call:
+
+```cpp
+{
+    std::scoped_lock lock(clients_mutex);
+    get_client_name(client_fd);
+}
+```
+
+But `get_client_name` itself **also** locks `clients_mutex`.
+This means you’ll deadlock immediately because `std::mutex` is not recursive.
+
+**Fix:** Don’t lock outside the call to `get_client_name`, since it already locks internally.
+
+```cpp
+get_client_name(client_fd);
+```
+
+---
+
+### 2. **Broadcasting and mutex scope**
+
+In `handle_client` you do:
+
+```cpp
+std::scoped_lock lock(clients_mutex);
+std::cout << message.c_str() << '\n';
+for (auto [other_fd, name] : clients) {
+    if (other_fd != client_fd) {
+        send(other_fd, message.c_str(), message.size(), 0);
+    }
+}
+```
+
+This works, but you’re **holding the mutex** during `send()` calls.
+If a client’s TCP buffer is full, `send()` will block and prevent other threads from updating `clients`.
+
+**Better:**
+
+* Copy the list of target sockets while holding the lock
+* Release the lock before sending
+
+```cpp
+std::vector<int> targets;
+{
+    std::scoped_lock lock(clients_mutex);
+    std::cout << message << '\n';
+    for (auto& [other_fd, name] : clients) {
+        if (other_fd != client_fd) {
+            targets.push_back(other_fd);
+        }
+    }
+}
+for (int fd : targets) {
+    send(fd, message.c_str(), message.size(), 0);
+}
+```
+
+---
+
+### 3. **Missing `SO_REUSEADDR`**
+
+If the server crashes and you restart it quickly, `bind()` might fail with `"Address already in use"`.
+You should add this before `bind()`:
+
+```cpp
+int opt = 1;
+setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+```
+
+---
+
+### 4. **Null-terminator risk**
+
+You do:
+
+```cpp
+buffer[bytes] = '\0';
+```
+
+That’s fine **only if** `bytes < sizeof(buffer)` (which is true for `recv()` but good to remember in case you change buffer logic later).
+
+---
+
+### 5. **Race condition on client disconnect**
+
+If `recv()` returns `<= 0` in `handle_client`, you do:
+
+```cpp
+std::cerr << clients[client_fd] << " disconnected\n";
+close(client_fd);
+std::scoped_lock lock(clients_mutex);
+clients.erase(client_fd);
+```
+
+But here, you access `clients[client_fd]` **without holding the mutex**.
+You should lock before reading from `clients`.
+
+---
+
+### 6. **Thread safety for printing**
+
+`std::cout` is not thread-safe for interleaved lines — two threads printing at the same time can mix output.
+You could either:
+
+* Lock around `std::cout`
+* Or use a dedicated logging thread
+
+---
+
+### Fixed `accept` loop
+
+Here’s your main loop with the locking fix:
+
+```cpp
+while (true) {
+    sockaddr_in client_addr;
+    socklen_t client_len = sizeof(client_addr);
+    int client_fd = accept(server_fd, reinterpret_cast<sockaddr*>(&client_addr), &client_len);
+    if (client_fd < 0) {
+        perror("accept");
+        continue;
+    }
+
+    get_client_name(client_fd);
+    std::thread(handle_client, client_fd).detach();
+}
+```
+
+---
+
+If you want, I can rewrite the whole file for you so it’s **deadlock-proof**, **safe for multiple clients**, and **avoids blocking on sends**. That would make it production-ready for a small chat server.
+
+Do you want me to do that?
